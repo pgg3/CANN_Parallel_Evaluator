@@ -34,34 +34,35 @@ pip install -e .
 
 ### 单设备评估
 
-框架支持两种 Python Reference 格式（自动检测），完整示例见 [`examples/`](examples/)：
+框架支持两种 Python Reference 格式（自动检测）：
 - **org 格式** — Model 类 + `get_inputs` / `get_init_inputs`（[relu_org.py](examples/relu_org.py)）
 - **fn 格式** — `module_fn` + Model 代理调用（[elu_fn.py](examples/elu_fn.py)）
 
+完整的可运行示例（含真实的 6 组件代码）见 [relu_complete.py](examples/relu_complete.py)，以下为精简版：
+
 ```python
-from pathlib import Path
 from evotoolkit.task.cann_init import CANNInitTask, CANNSolutionConfig
 from evotoolkit.core import Solution
 
-# 读取 Python Reference（org 或 fn 格式均可）
-python_ref = Path("examples/relu_org.py").read_text()
-
 task = CANNInitTask(data={
     "op_name": "relu",
-    "python_reference": python_ref,
+    "python_reference": open("examples/relu_org.py").read(),
 })
 
 config = CANNSolutionConfig(
-    kernel_impl="...", kernel_entry_body="...",
-    tiling_fields=[{"name": "totalLength", "type": "uint32_t"}],
-    tiling_func_body="...", infer_shape_body="...",
-    output_alloc_code='at::Tensor result = at::empty_like(x);',
+    kernel_impl=KERNEL_IMPL,             # Ascend C Kernel 类
+    kernel_entry_body=KERNEL_ENTRY_BODY, # 入口函数体
+    tiling_fields=TILING_FIELDS,         # TilingData 结构体字段
+    tiling_func_body=TILING_FUNC_BODY,   # Host 端分片计算逻辑
+    infer_shape_body=INFER_SHAPE_BODY,   # 输出 Shape 推断
+    output_alloc_code=OUTPUT_ALLOC_CODE, # 输出 tensor 分配
 )
 
 result = task.evaluate_solution(Solution("", config.to_dict()))
 
 if result.valid:
-    print(f"运行时间: {result.additional_info['runtime']:.4f} ms")
+    info = result.additional_info
+    print(f"Runtime: {info['runtime']:.4f} ms, Speedup: {info['speedup']:.3f}x")
 ```
 
 ### 多设备并行评估

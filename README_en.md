@@ -34,34 +34,35 @@ pip install -e .
 
 ### Single Device
 
-Two Python reference formats are supported (auto-detected). See [`examples/`](examples/) for complete samples:
+Two Python reference formats are supported (auto-detected):
 - **org format** — Model class + `get_inputs` / `get_init_inputs` ([relu_org.py](examples/relu_org.py))
 - **fn format** — `module_fn` + Model proxy call ([elu_fn.py](examples/elu_fn.py))
 
+For a complete runnable example with all 6 real components, see [relu_complete.py](examples/relu_complete.py). Minimal version:
+
 ```python
-from pathlib import Path
 from evotoolkit.task.cann_init import CANNInitTask, CANNSolutionConfig
 from evotoolkit.core import Solution
 
-# Load Python reference (org or fn format)
-python_ref = Path("examples/relu_org.py").read_text()
-
 task = CANNInitTask(data={
     "op_name": "relu",
-    "python_reference": python_ref,
+    "python_reference": open("examples/relu_org.py").read(),
 })
 
 config = CANNSolutionConfig(
-    kernel_impl="...", kernel_entry_body="...",
-    tiling_fields=[{"name": "totalLength", "type": "uint32_t"}],
-    tiling_func_body="...", infer_shape_body="...",
-    output_alloc_code='at::Tensor result = at::empty_like(x);',
+    kernel_impl=KERNEL_IMPL,             # Ascend C Kernel class
+    kernel_entry_body=KERNEL_ENTRY_BODY, # Entry function body
+    tiling_fields=TILING_FIELDS,         # TilingData struct fields
+    tiling_func_body=TILING_FUNC_BODY,   # Host-side tiling logic
+    infer_shape_body=INFER_SHAPE_BODY,   # Output shape inference
+    output_alloc_code=OUTPUT_ALLOC_CODE, # Output tensor allocation
 )
 
 result = task.evaluate_solution(Solution("", config.to_dict()))
 
 if result.valid:
-    print(f"Runtime: {result.additional_info['runtime']:.4f} ms")
+    info = result.additional_info
+    print(f"Runtime: {info['runtime']:.4f} ms, Speedup: {info['speedup']:.3f}x")
 ```
 
 ### Multi-Device Parallel
