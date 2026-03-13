@@ -95,6 +95,48 @@ Thread 3 ──► acquire(blocks until free) ──► ...
 
 The pool is a thread-safe `queue.Queue`. Each device runs at most one evaluation at a time.
 
+## Evaluation Result
+
+`evaluate_solution()` returns an `EvaluationResult`:
+
+**Success:**
+
+```python
+EvaluationResult(
+    valid=True,
+    score=-10.4015,                    # Negative runtime (lower is better, used for ranking)
+    additional_info={
+        "stage": "success",
+        "runtime": 10.4015,            # Ascend C kernel runtime (ms)
+        "runtime_std": 0.0243,
+        "baseline_runtime": 10.0402,   # Python reference runtime (ms)
+        "baseline_std": 0.0152,
+        "speedup": 0.965,              # Relative speedup
+        "kernel_src": "...",
+        "project_path": "/tmp/cann_relu_xxx",
+    }
+)
+```
+
+**Failure:**
+
+```python
+EvaluationResult(
+    valid=False,
+    score=None,
+    additional_info={
+        "stage": "compile",            # Failure stage: compile / validation / correctness / sandbox / exception
+        "error": "...",                # Error message
+        "kernel_src": "...",
+        "project_path": "/tmp/cann_relu_xxx",
+        # Additional fields when stage="correctness":
+        # "python_output": ..., "ascend_output": ..., "max_diff": 0.0023,
+    }
+)
+```
+
+See [API Reference](docs/api.md) for detailed stage definitions and field descriptions.
+
 ## Documentation
 
 | Document | Content |

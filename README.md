@@ -95,6 +95,48 @@ with ThreadPoolExecutor(max_workers=8) as pool:
 
 设备池基于线程安全的 `queue.Queue`，保证每张卡同一时刻最多运行一个评估任务。
 
+## 评估结果
+
+`evaluate_solution()` 返回 `EvaluationResult`：
+
+**成功：**
+
+```python
+EvaluationResult(
+    valid=True,
+    score=-10.4015,                    # 负的运行时间（越小越好，用于排序）
+    additional_info={
+        "stage": "success",
+        "runtime": 10.4015,            # Ascend C kernel 运行时间 (ms)
+        "runtime_std": 0.0243,
+        "baseline_runtime": 10.0402,   # Python Reference 运行时间 (ms)
+        "baseline_std": 0.0152,
+        "speedup": 0.965,              # 相对加速比
+        "kernel_src": "...",
+        "project_path": "/tmp/cann_relu_xxx",
+    }
+)
+```
+
+**失败：**
+
+```python
+EvaluationResult(
+    valid=False,
+    score=None,
+    additional_info={
+        "stage": "compile",            # 失败阶段：compile / validation / correctness / sandbox / exception
+        "error": "...",                # 错误信息
+        "kernel_src": "...",
+        "project_path": "/tmp/cann_relu_xxx",
+        # correctness 失败时额外包含：
+        # "python_output": ..., "ascend_output": ..., "max_diff": 0.0023,
+    }
+)
+```
+
+详细的 stage 定义和字段说明见 [API 参考](docs/api.md#评估结果)。
+
 ## 文档
 
 | 文档 | 内容 |
