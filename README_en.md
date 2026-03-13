@@ -34,65 +34,21 @@ pip install -e .
 
 ### Single Device
 
-Two Python reference formats are supported (auto-detected):
-
-**org format** (Model class + `get_inputs` / `get_init_inputs`):
-
-```python
-PYTHON_REFERENCE = """
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-class Model(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return torch.relu(x)
-
-def get_inputs():
-    return [torch.randn(16, 16384)]
-
-def get_init_inputs():
-    return []
-"""
-```
-
-**fn format** (`module_fn` + Model proxy call):
+Two Python reference formats are supported (auto-detected). See [`examples/`](examples/) for complete samples:
+- **org format** — Model class + `get_inputs` / `get_init_inputs` ([relu_org.py](examples/relu_org.py))
+- **fn format** — `module_fn` + Model proxy call ([elu_fn.py](examples/elu_fn.py))
 
 ```python
-PYTHON_REFERENCE = """
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-def module_fn(x: torch.Tensor, alpha: float) -> torch.Tensor:
-    return F.elu(x, alpha=alpha)
-
-class Model(nn.Module):
-    def __init__(self, alpha: float = 1.0):
-        super().__init__()
-        self.alpha = alpha
-
-    def forward(self, x: torch.Tensor, fn=module_fn) -> torch.Tensor:
-        return fn(x, self.alpha)
-
-def get_inputs():
-    return [torch.randn(16, 16384)]
-
-def get_init_inputs():
-    return [1.0]
-"""
-```
-
-```python
+from pathlib import Path
 from evotoolkit.task.cann_init import CANNInitTask, CANNSolutionConfig
 from evotoolkit.core import Solution
 
+# Load Python reference (org or fn format)
+python_ref = Path("examples/relu_org.py").read_text()
+
 task = CANNInitTask(data={
     "op_name": "relu",
-    "python_reference": PYTHON_REFERENCE,
+    "python_reference": python_ref,
 })
 
 config = CANNSolutionConfig(

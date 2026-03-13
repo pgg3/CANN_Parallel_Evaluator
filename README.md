@@ -34,65 +34,21 @@ pip install -e .
 
 ### 单设备评估
 
-框架支持两种 Python Reference 格式，自动检测：
-
-**org 格式**（Model 类 + `get_inputs` / `get_init_inputs`）：
-
-```python
-PYTHON_REFERENCE = """
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-class Model(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return torch.relu(x)
-
-def get_inputs():
-    return [torch.randn(16, 16384)]
-
-def get_init_inputs():
-    return []
-"""
-```
-
-**fn 格式**（`module_fn` + Model 代理调用）：
+框架支持两种 Python Reference 格式（自动检测），完整示例见 [`examples/`](examples/)：
+- **org 格式** — Model 类 + `get_inputs` / `get_init_inputs`（[relu_org.py](examples/relu_org.py)）
+- **fn 格式** — `module_fn` + Model 代理调用（[elu_fn.py](examples/elu_fn.py)）
 
 ```python
-PYTHON_REFERENCE = """
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-def module_fn(x: torch.Tensor, alpha: float) -> torch.Tensor:
-    return F.elu(x, alpha=alpha)
-
-class Model(nn.Module):
-    def __init__(self, alpha: float = 1.0):
-        super().__init__()
-        self.alpha = alpha
-
-    def forward(self, x: torch.Tensor, fn=module_fn) -> torch.Tensor:
-        return fn(x, self.alpha)
-
-def get_inputs():
-    return [torch.randn(16, 16384)]
-
-def get_init_inputs():
-    return [1.0]
-"""
-```
-
-```python
+from pathlib import Path
 from evotoolkit.task.cann_init import CANNInitTask, CANNSolutionConfig
 from evotoolkit.core import Solution
 
+# 读取 Python Reference（org 或 fn 格式均可）
+python_ref = Path("examples/relu_org.py").read_text()
+
 task = CANNInitTask(data={
     "op_name": "relu",
-    "python_reference": PYTHON_REFERENCE,
+    "python_reference": python_ref,
 })
 
 config = CANNSolutionConfig(
