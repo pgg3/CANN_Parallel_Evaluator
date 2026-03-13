@@ -1,0 +1,5 @@
+[
+  {"name": "totalLength", "type": "uint32_t"},
+  {"name": "tileNum", "type": "uint32_t"},
+  {"name": "tileLength", "type": "uint32_t"}
+]
