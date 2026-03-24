@@ -8,8 +8,7 @@
 import json
 from pathlib import Path
 
-from evotoolkit.core import Solution
-from evotoolkit.task.cann_init import CANNInitTask, CANNSolutionConfig
+from cann_parallel_evaluator import CANNInitTask, CANNSolutionConfig, Solution
 
 EXAMPLES_DIR = Path(__file__).parent
 COMPONENTS_DIR = EXAMPLES_DIR / "relu_components"

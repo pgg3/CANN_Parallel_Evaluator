@@ -1,0 +1,28 @@
+## Critical Constraints (Compact)
+
+- **NO float↔unsigned cast**: `(float)uint32Var` is forbidden in aicore. Use `(float)(int32_t)uint32Var` or declare as `int32_t`.
+- **NO C math**: `exp()` `sin()` `sqrt()` do NOT exist in kernel. Use `Exp(d,s,n)` etc.
+- **NO scalar indexing**: `xLocal[i]` cannot be used as float. Use vector ops on entire tensors.
+- **QuePosition**: Only `VECIN` `VECOUT` `VECCALC` exist. No `TEMP` `VECTMP` `VECBUF` `TMP`.
+- **Sub(d,s,scalar)**: Does NOT exist. Use `Adds(d,s,-scalar,n)`.
+- **Compare(mask,s,scalar)**: Does NOT exist. Use `CompareScalar(mask,s,scalar,mode,n)`.
+- **Mask type**: `LocalTensor<uint8_t>`. No `SelectMask` `bool` `Tensor<bool>`.
+- **No Neg/Subs/Divs/Pow**: Use `Muls(d,s,-1,n)` `Adds(d,s,-x,n)` `Muls(d,s,1/x,n)`.
+- **Struct tiling fields**: `TILING_DATA_FIELD_DEF_STRUCT` has NO `set_xxx()` setter. Use direct assign: `tiling.cubeTiling = cubeTiling;` NOT `tiling.set_cubeTiling(cubeTiling)`.
+- **Cube MUST use REGIST_MATMUL_OBJ**: Do NOT call `mm.Init()` manually. Use `REGIST_MATMUL_OBJ(&pipe, GetSysWorkSpacePtr(), mm, &cubeTiling)`. Manual Init causes `free(): double free` crash on 910B.
+- **Cube MUST declare KERNEL_TASK_TYPE**: Add `KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);` as first line of kernel entry body. Without this, AIC/AIV cores conflict.
+- **Cube kernel: flat structure only**: Do NOT wrap Matmul<> in a class. Use local variables in kernel entry body. `REGIST_MATMUL_OBJ` may inject `return` on AIC path, incompatible with class destructors.
+- **Cube dtype**: 910B Cube unit only supports half (fp16). Cast to half in OUTPUT_ALLOC_CODE: `A = A.to(at::kHalf);` Kernel uses `GlobalTensor<half>`, tiling uses `DT_FLOAT16`.
+- **Cube alignment**: M, K, N must be multiples of 16. Pad if needed.
+- **Cube BLOCK_DIM**: Always `SetBlockDim(1)` for Matmul<> operators.
+- **Cube workspace**: Fixed 32 MB system workspace: `ws[0] = 32 * 1024 * 1024;`. Kernel uses `GetSysWorkSpacePtr()` via `REGIST_MATMUL_OBJ`.
+- **Cube tiling class**: `matmul_tiling::MatmulApiTiling` (NOT `optiling::MatmulTiling`). `SetAType` needs 3 args: `(TPosition::GM, CubeFormat::ND, DataType::DT_FLOAT16)`. `SetShape(M,N,K)` order is M,N,K.
+- **No L0/UB mixing**: Matmul<> manages L1/L0 internally. Pass `GlobalTensor` to `SetTensorA/B`.
+- **No MaxPool/AvgPool API**: Implement with sliding window + `ReduceMax`/`ReduceSum`.
+- **ReduceSum/Max/Min aliasing**: `ReduceXxx(dst, src, workLocal, n)` — `dst` and `workLocal` MUST be different tensors. Same-buffer aliasing silently produces garbage.
+- **Scalar output (0-dim tensor)**: `torch.mean()`/`torch.sum()`/`torch.dot()` return `torch.Size([])`. Use `at::empty({}, opts)` + `y_shape->SetDimNum(0)`. NOT `at::empty({1})` which gives `torch.Size([1])` and fails shape check.
+- **Large tensor (>500M elements)**: Use `int64_t` for totalLength, blockLength, offsets, and GM indexing. `uint32_t` overflows at ~1B float32 elements (4GB), causing "DDR address out of range" crash.
+- **DataCopy minimum & boundary**: `DataCopy` requires `count * sizeof(T) >= 32` (8 float32, 4 int64, 16 int16). Near buffer end, clamp start: `alignedStart = min(idx/align*align, size-minCount)` to prevent DDR out-of-range. Read target element via `localOffset = idx - alignedStart`.
+- **Multi-core scalar reduction**: When `BLOCK_DIM > 1` and output is a scalar, each core computes a partial result, then writes to output GM via `SetAtomicAdd<float>()` + `DataCopy(outputGm, localBuf, 8)` + `SetAtomicNone()`. Output must be zero-initialized: `at::zeros({}, opts)` in OUTPUT_ALLOC_CODE.
+- **MTE2 target position**: `DataCopy(localTensor, gmTensor, count)` (GM→UB, MTE2) can only write to **VECIN or VECCALC** position. Writing to VECOUT is undefined — data lands in wrong memory, producing silent corruption. Use `TQue<VECIN>` or `TBuf<VECCALC>` as DMA-in target.
+- **One TBuf per QuePosition**: Never allocate two `TBuf` objects on the same `QuePosition`. Two `TBuf<VECCALC>` will share/corrupt UB address space. Use one `TBuf` and partition via offsets, or use different positions (`TBuf<VECIN>` + `TBuf<VECCALC>`).

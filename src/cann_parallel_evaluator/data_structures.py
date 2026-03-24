@@ -1,0 +1,171 @@
+# Copyright (c) 2025 Ping Guo
+# Licensed under the MIT License
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+
+@dataclass
+class CompileResult:
+    success: bool
+    error: Optional[str] = None
+    project_path: Optional[str] = None
+    op_name: Optional[str] = None
+    context: Dict[str, Any] = field(default_factory=dict)
+    kernel_src: Optional[str] = None
+    full_code: Optional[Dict[str, str]] = None
+
+    def save(self, path: str) -> None:
+        save_path = Path(path)
+        save_path.mkdir(parents=True, exist_ok=True)
+
+        metadata = {
+            "success": self.success,
+            "error": self.error,
+            "project_path": self.project_path,
+            "op_name": self.op_name,
+            "kernel_src": self.kernel_src,
+        }
+
+        with open(save_path / "compile_result.json", "w") as f:
+            json.dump(metadata, f, indent=2)
+
+        if self.full_code:
+            with open(save_path / "full_code.json", "w") as f:
+                json.dump(self.full_code, f, indent=2)
+
+    @classmethod
+    def load(cls, path: str) -> "CompileResult":
+        load_path = Path(path)
+
+        with open(load_path / "compile_result.json") as f:
+            metadata = json.load(f)
+
+        full_code = None
+        full_code_path = load_path / "full_code.json"
+        if full_code_path.exists():
+            with open(full_code_path) as f:
+                full_code = json.load(f)
+
+        return cls(
+            success=metadata["success"],
+            error=metadata.get("error"),
+            project_path=metadata.get("project_path"),
+            op_name=metadata.get("op_name"),
+            kernel_src=metadata.get("kernel_src"),
+            full_code=full_code,
+            context={},
+        )
+
+    def is_loadable(self) -> bool:
+        return self.success and self.project_path is not None
+
+
+@dataclass
+class CANNSolutionConfig:
+    """CANN Solution 配置，包含 LLM 生成的组件和执行控制参数。
+
+    LLM 生成组件按目标文件分组：
+    - Kernel (Device): kernel_impl + kernel_entry_body → kernel_src
+    - Host Tiling: tiling_fields → host_tiling_src
+    - Host Operator: tiling_func_body + infer_shape_body → host_operator_src
+    - Python Bind: output_alloc_code → python_bind_src
+    """
+
+    # === Project Config ===
+    project_path: Optional[str] = None
+
+    # === Kernel (Device side) - generates kernel_src ===
+    # Template: #include + kernel_impl + entry function(signature + GET_TILING_DATA + body)
+    kernel_impl: Optional[str] = None           # Kernel class and helper code (may contain #include)
+    kernel_entry_body: Optional[str] = None     # Entry function body (after GET_TILING_DATA)
+
+    # === Host Tiling - generates host_tiling_src ===
+    # Template: #include + BEGIN_TILING_DATA_DEF + fields + END_TILING_DATA_DEF
+    # Accepts list of field dicts, or dict with "fields" + optional "includes"
+    tiling_fields: Optional[Any] = None
+
+    # === Host Operator - generates host_operator_src ===
+    # Template: #include + TilingFunc + InferShape + IMPL_OP
+    tiling_func_body: Optional[str] = None      # TilingFunc body (may contain #include at top)
+    infer_shape_body: Optional[str] = None      # InferShape function body
+
+    # === Python Bind - generates python_bind_src ===
+    # Template: impl function(alloc + EXEC_NPU_CMD) + PYBIND11_MODULE
+    output_alloc_code: Optional[str] = None     # Output tensor allocation code
+
+    # === Execution control ===
+    compile_only: bool = False                  # Only compile, skip correctness/performance
+    load_from: Optional[str] = None             # Load compiled result from path
+    save_compile_to: Optional[str] = None       # Save compiled result to path
+    skip_correctness: bool = False              # Skip correctness verification
+    skip_performance: bool = False              # Skip performance measurement
+
+    @classmethod
+    def from_dict(cls, d: Optional[Dict[str, Any]]) -> "CANNSolutionConfig":
+        if not d:
+            return cls()
+
+        return cls(
+            # Project config
+            project_path=d.get("project_path"),
+            # Kernel (Device)
+            kernel_impl=d.get("kernel_impl"),
+            kernel_entry_body=d.get("kernel_entry_body"),
+            # Host Tiling
+            tiling_fields=d.get("tiling_fields"),
+            # Host Operator
+            tiling_func_body=d.get("tiling_func_body"),
+            infer_shape_body=d.get("infer_shape_body"),
+            # Python Bind
+            output_alloc_code=d.get("output_alloc_code"),
+            # Execution control
+            compile_only=d.get("compile_only", False),
+            load_from=d.get("load_from"),
+            save_compile_to=d.get("save_compile_to"),
+            skip_correctness=d.get("skip_correctness", False),
+            skip_performance=d.get("skip_performance", False),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        result = {}
+
+        # Project config
+        if self.project_path is not None:
+            result["project_path"] = self.project_path
+
+        # Kernel (Device)
+        if self.kernel_impl is not None:
+            result["kernel_impl"] = self.kernel_impl
+        if self.kernel_entry_body is not None:
+            result["kernel_entry_body"] = self.kernel_entry_body
+
+        # Host Tiling
+        if self.tiling_fields is not None:
+            result["tiling_fields"] = self.tiling_fields
+
+        # Host Operator
+        if self.tiling_func_body is not None:
+            result["tiling_func_body"] = self.tiling_func_body
+        if self.infer_shape_body is not None:
+            result["infer_shape_body"] = self.infer_shape_body
+
+        # Python Bind
+        if self.output_alloc_code is not None:
+            result["output_alloc_code"] = self.output_alloc_code
+
+        # Execution control
+        if self.compile_only:
+            result["compile_only"] = True
+        if self.load_from is not None:
+            result["load_from"] = self.load_from
+        if self.save_compile_to is not None:
+            result["save_compile_to"] = self.save_compile_to
+        if self.skip_correctness:
+            result["skip_correctness"] = True
+        if self.skip_performance:
+            result["skip_performance"] = True
+
+        return result
