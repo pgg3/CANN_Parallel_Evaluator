@@ -4,7 +4,7 @@
 
 面向昇腾 C 算子的编译、正确性验证、性能测量框架，内置多 NPU 并行评估支持。
 
-基于 [evotoolkit](https://github.com/pgg3/evotoolkit) 构建。
+基于 [evotoolkit](https://github.com/pgg3/evotoolkit) 构建，现已作为独立包发布。
 
 ## 特性
 
@@ -22,10 +22,8 @@
 ## 安装
 
 ```bash
-git clone https://github.com/pgg3/evotoolkit.git
-cd evotoolkit
-git checkout feature/cann-init
-pip install -e .
+git clone https://github.com/pgg3/CANN_Parallel_Evaluator.git
+pip install -e ./CANN_Parallel_Evaluator
 ```
 
 > CANN 任务无额外 Python 依赖，CANN Toolkit 和 torch-npu 需在系统级安装。
@@ -41,8 +39,7 @@ pip install -e .
 完整的可运行示例（含真实的 6 组件代码）见 [relu_complete.py](examples/relu_complete.py)，以下为精简版：
 
 ```python
-from evotoolkit.task.cann_init import CANNInitTask, CANNSolutionConfig
-from evotoolkit.core import Solution
+from cann_parallel_evaluator import CANNInitTask, CANNSolutionConfig, Solution
 
 task = CANNInitTask(data={
     "op_name": "relu",
@@ -143,6 +140,10 @@ EvaluationResult(
 |------|------|
 | [API 参考](docs/api.md) | 构造函数参数、Solution 配置字段、设备池方法、返回结果结构 |
 | [架构设计](docs/architecture.md) | 评估流水线、沙箱设计、串行 vs 并行模式 |
+| [编译流水线](docs/compile_pipeline.md) | 8 步编译流水线 + 并行编译 |
+| [沙箱设计](docs/sandbox_design.md) | 沙箱隔离机制 |
+| [工程化改进](docs/engineering.md) | 与 MultiKernelBench 的对比 |
+| [知识系统](docs/knowledge/README.md) | CANNKnowledgeProvider 设计 |
 
 ## 许可证
 

@@ -4,7 +4,7 @@
 
 A compile, correctness verification, and performance measurement framework for Ascend C operators, with built-in multi-NPU parallel evaluation support.
 
-Built on [evotoolkit](https://github.com/pgg3/evotoolkit).
+Built on [evotoolkit](https://github.com/pgg3/evotoolkit), now published as a standalone package.
 
 ## Features
 
@@ -22,10 +22,8 @@ Built on [evotoolkit](https://github.com/pgg3/evotoolkit).
 ## Installation
 
 ```bash
-git clone https://github.com/pgg3/evotoolkit.git
-cd evotoolkit
-git checkout feature/cann-init
-pip install -e .
+git clone https://github.com/pgg3/CANN_Parallel_Evaluator.git
+pip install -e ./CANN_Parallel_Evaluator
 ```
 
 > The CANN task has no extra Python dependencies. CANN Toolkit and torch-npu must be installed at the system level.
@@ -41,8 +39,7 @@ Two Python reference formats are supported (auto-detected):
 For a complete runnable example with all 6 real components, see [relu_complete.py](examples/relu_complete.py). Minimal version:
 
 ```python
-from evotoolkit.task.cann_init import CANNInitTask, CANNSolutionConfig
-from evotoolkit.core import Solution
+from cann_parallel_evaluator import CANNInitTask, CANNSolutionConfig, Solution
 
 task = CANNInitTask(data={
     "op_name": "relu",
@@ -143,6 +140,10 @@ See [API Reference](docs/api.md) for detailed stage definitions and field descri
 |----------|---------|
 | [API Reference](docs/api.md) | Constructor parameters, solution config fields, device pool methods, result structure |
 | [Architecture](docs/architecture.md) | Evaluation pipeline, sandbox design, serial vs parallel modes |
+| [Compile Pipeline](docs/compile_pipeline.md) | 8-step compile pipeline + parallel compilation |
+| [Sandbox Design](docs/sandbox_design.md) | Sandbox isolation mechanism |
+| [Engineering](docs/engineering.md) | Comparison with MultiKernelBench |
+| [Knowledge System](docs/knowledge/README.md) | CANNKnowledgeProvider design |
 
 ## License
 
