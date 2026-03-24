@@ -467,7 +467,7 @@ Python Reference:
 
 This operator has init parameters that must be passed from host (TilingFunc) to device (kernel).
 
-### Step 1: Define fields in TILING_FIELDS
+### Step 1: Add fields to TilingData in op_host/*_tiling.h
 ```
 {tiling_fields}
 ```
@@ -475,14 +475,14 @@ This operator has init parameters that must be passed from host (TilingFunc) to 
 Note: `list_int` / `list_float` attrs cannot be stored directly in TilingData.
 Compute derived scalar values (e.g., product, count) and store those instead.
 
-### Step 2: Get attributes in TILING_FUNC_BODY
+### Step 2: Get attributes in TilingFunc (op_host/*.cpp)
 ```cpp
 // Get attributes from context
 const auto* attrs = context->GetAttrs();
 {attr_code}
 ```
 
-In the kernel, access these via `tilingData.{params[0]['name']}` etc.
+In the kernel (op_kernel/*.cpp), access these via `tilingData.{params[0]['name']}` etc.
 
 IMPORTANT:
 - Use the convenience methods: `GetInt(i)` returns `const int64_t*`, `GetFloat(i)` returns `const float*`, `GetBool(i)` returns `const bool*`.
@@ -525,25 +525,16 @@ IMPORTANT:
         return True
 
     def _get_component_specification_minimal(self) -> str:
-        """精简版组件规范：只有文件结构和输出格式，无 Add 完整示例。
-
-        用于 evolve 阶段，此时父代代码已经包含了所有必要的模式知识。
-        """
+        """精简版输出格式：只有文件结构，无完整示例。用于 evolve 阶段。"""
         op_name_snake = self.op_name.replace("-", "_").lower()
         op_custom = f"{op_name_snake}_custom"
-        op_custom_capital = "".join(
-            word.capitalize() for word in op_custom.split("_")
-        )
+        op_custom_capital = "".join(word.capitalize() for word in op_custom.split("_"))
 
-        tensor_inputs = [
-            inp for inp in self.signature["inputs"] if inp.get("is_tensor", True)
-        ]
+        tensor_inputs = [inp for inp in self.signature["inputs"] if inp.get("is_tensor", True)]
         gm_params = [inp["name"] for inp in tensor_inputs]
         gm_params.extend([out["name"] for out in self.signature["outputs"]])
         gm_signature = ", ".join(f"GM_ADDR {p}" for p in gm_params)
-        first_input = tensor_inputs[0]["name"] if tensor_inputs else "x"
 
-        # Python binding 签名和 EXEC_NPU_CMD 参数（包含 init_params）
         init_params = self.signature.get("init_params", [])
         pybind_param_parts = [f"const at::Tensor& {inp['name']}" for inp in tensor_inputs]
         exec_args = [inp["name"] for inp in tensor_inputs]
@@ -559,44 +550,58 @@ IMPORTANT:
         pybind_params = ", ".join(pybind_param_parts)
         exec_args_str = ", ".join(exec_args)
 
-        return f"""## Code Architecture (Compact)
+        return f"""## Output Format
 
-Provide **6 components**: KERNEL_IMPL, KERNEL_ENTRY_BODY, TILING_FIELDS, TILING_FUNC_BODY, INFER_SHAPE_BODY, OUTPUT_ALLOC_CODE.
+Provide **3 sections**: OP_KERNEL, OP_HOST (2 code blocks), PYBINDING.
 
-kernel entry: `{op_custom}({gm_signature}, GM_ADDR workspace, GM_ADDR tiling)`
-tiling class: `{op_custom_capital}TilingData`
-python bind: `{op_custom}_impl_npu({pybind_params})`
-EXEC_NPU_CMD: `aclnn{op_custom_capital}, {exec_args_str}, result`
+**Naming for this operator:**
+- op_custom: `{op_custom}`
+- PascalCase: `{op_custom_capital}`
+- TilingData: `{op_custom_capital}TilingData`
+- Kernel entry: `void {op_custom}({gm_signature}, GM_ADDR workspace, GM_ADDR tiling)`
+- Pybinding: `{op_custom}_impl_npu({pybind_params})`
+- EXEC_NPU_CMD: `aclnn{op_custom_capital}, {exec_args_str}, result`
 
-Optional: KERNEL_INCLUDES, TILING_INCLUDES, TILING_FUNC_INCLUDES"""
+### OP_KERNEL
+```cpp
+[Complete op_kernel/{op_custom}.cpp]
+```
+
+### OP_HOST
+```cpp
+// === {op_custom}_tiling.h ===
+[Complete tiling header with include guard, BEGIN/END_TILING_DATA_DEF, REGISTER_TILING_DATA_CLASS]
+```
+```cpp
+// === {op_custom}.cpp ===
+[Complete host source with TilingFunc, InferShape, OpDef class]
+```
+
+### PYBINDING
+```cpp
+[Complete CppExtension/csrc/op.cpp with EXEC_NPU_CMD and PYBIND11_MODULE]
+```"""
 
     def _get_advanced_api_reference(self) -> str:
         """Delegate to provider."""
         return self.get_knowledge_provider().get_advanced_api_reference()
 
     def _get_component_specification(self) -> str:
-        """内部方法：完整代码架构说明和组件标注"""
-        # 准备变量
-        op_name = self.op_name
-        op_name_snake = op_name.replace("-", "_").lower()
-        op_name_pascal = "".join(word.capitalize() for word in op_name_snake.split("_"))
-        # 实际模板使用 _custom 后缀
+        """完整代码架构说明：3 section 格式 + Add 完整示例"""
+        op_name_snake = self.op_name.replace("-", "_").lower()
         op_custom = f"{op_name_snake}_custom"
         op_custom_capital = "".join(word.capitalize() for word in op_custom.split("_"))
+        op_custom_upper = op_custom.upper()
 
-        # 输入输出参数
         tensor_inputs = [inp for inp in self.signature["inputs"] if inp.get("is_tensor", True)]
         gm_params = [inp["name"] for inp in tensor_inputs]
         gm_params.extend([out["name"] for out in self.signature["outputs"]])
         gm_signature = ", ".join(f"GM_ADDR {p}" for p in gm_params)
-        gm_args = ", ".join(gm_params)
-
-        # 第一个输入名
         first_input = tensor_inputs[0]["name"] if tensor_inputs else "x"
 
-        # Python binding 函数签名（包含 init_params）
         init_params = self.signature.get("init_params", [])
         pybind_param_parts = [f"const at::Tensor& {inp['name']}" for inp in tensor_inputs]
+        exec_args = [inp["name"] for inp in tensor_inputs]
         for param in init_params:
             cpp_type = {"int": "int64_t", "float": "float", "bool": "bool"}.get(
                 param.get("dtype", "float"), param.get("dtype", "float")
@@ -605,92 +610,83 @@ Optional: KERNEL_INCLUDES, TILING_INCLUDES, TILING_FUNC_INCLUDES"""
                 pybind_param_parts.append(f"const at::Tensor& {param['name']}")
             else:
                 pybind_param_parts.append(f"{cpp_type} {param['name']}")
+            exec_args.append(param["name"])
         pybind_params = ", ".join(pybind_param_parts)
+        exec_args_str = ", ".join(exec_args)
 
-        # EXEC_NPU_CMD 参数（包含 init_params）
-        exec_cmd_args = [inp["name"] for inp in tensor_inputs]
-        exec_cmd_args.extend([p["name"] for p in init_params])
-        exec_cmd_args_str = ", ".join(exec_cmd_args)
+        # Build input dtype info for OpDef example
+        input_dtype_lines = []
+        for inp in tensor_inputs:
+            input_dtype_lines.append(
+                f'        this->Input("{inp["name"]}").ParamType(REQUIRED).DataType({{ge::DT_FLOAT}}).Format({{ge::FORMAT_ND}});'
+            )
+        for out in self.signature["outputs"]:
+            input_dtype_lines.append(
+                f'        this->Output("{out["name"]}").ParamType(REQUIRED).DataType({{ge::DT_FLOAT}}).Format({{ge::FORMAT_ND}});'
+            )
+        opdef_io = "\n".join(input_dtype_lines)
 
         spec = f"""## Code Architecture
 
-Ascend C operator requires 4 source files. You need to provide **6 components** that will be assembled into these files:
+Ascend C operator requires **4 source files**. Provide them as **3 sections**: OP_KERNEL, OP_HOST (2 code blocks), PYBINDING.
 
-| File | Description | Your Components |
-|------|-------------|-----------------|
-| **kernel_src** | Device kernel running on NPU | KERNEL_IMPL, KERNEL_ENTRY_BODY |
-| **host_tiling_src** | TilingData structure definition | TILING_FIELDS |
-| **host_operator_src** | Host-side TilingFunc and InferShape | TILING_FUNC_BODY, INFER_SHAPE_BODY |
-| **python_bind_src** | PyTorch Python binding | OUTPUT_ALLOC_CODE |
+### File layout
+| Section | File | Content |
+|---------|------|---------|
+| **OP_KERNEL** | `op_kernel/{op_custom}.cpp` | Kernel class + entry function |
+| **OP_HOST** block 1 | `op_host/{op_custom}_tiling.h` | TilingData struct definition |
+| **OP_HOST** block 2 | `op_host/{op_custom}.cpp` | TilingFunc + InferShape + OpDef |
+| **PYBINDING** | `CppExtension/csrc/op.cpp` | PyTorch binding |
+
+### Naming for **{self.op_name}**
+- `op_custom` = `{op_custom}` (snake_case + _custom suffix)
+- `OpCustomCapital` = `{op_custom_capital}` (PascalCase)
+- `TilingData` = `{op_custom_capital}TilingData`
+- Kernel entry: `void {op_custom}({gm_signature}, GM_ADDR workspace, GM_ADDR tiling)`
+- Python binding: `{op_custom}_impl_npu({pybind_params})`
+- EXEC_NPU_CMD: `aclnn{op_custom_capital}, {exec_args_str}, result`
+
+### Required structural patterns
+
+**op_kernel/{op_custom}.cpp**
+- `#include "kernel_operator.h"` at top
+- `using namespace AscendC;`
+- Kernel class with Init() and Process()
+- `extern "C" __global__ __aicore__ void {op_custom}({gm_signature}, GM_ADDR workspace, GM_ADDR tiling)`
+- `GET_TILING_DATA(tilingData, tiling);` as first line of entry function
+
+**op_host/{op_custom}_tiling.h**
+- Include guard: `#ifndef {op_custom_upper}_TILING_H` / `#define {op_custom_upper}_TILING_H`
+- `#include "register/tilingdata_base.h"`
+- `namespace optiling {{` wrapping:
+  - `BEGIN_TILING_DATA_DEF({op_custom_capital}TilingData)` ... `END_TILING_DATA_DEF;`
+  - `REGISTER_TILING_DATA_CLASS({op_custom_capital}, {op_custom_capital}TilingData)`
+- Closing `}}` and `#endif`
+
+**op_host/{op_custom}.cpp**
+- `#include "{op_custom}_tiling.h"` and `#include "register/op_def_registry.h"`
+- `namespace optiling {{ static ge::graphStatus TilingFunc(gert::TilingContext* context) {{ ... }} }}`
+- `namespace ge {{ static ge::graphStatus InferShape(gert::InferShapeContext* context) {{ ... }} }}`
+- `namespace ops {{ class {op_custom_capital} : public OpDef {{ ... }}; OP_ADD({op_custom_capital}); }}`
+- OpDef must call: `this->SetInferShape(ge::InferShape);` and `this->AICore().SetTiling(optiling::TilingFunc);`
+- `this->AICore().AddConfig("ascend910b");`
+
+**CppExtension/csrc/op.cpp**
+- `#include <torch/library.h>` and `#include "pytorch_npu_helper.hpp"`
+- `at::Tensor {op_custom}_impl_npu({pybind_params})` — each tensor input must be `const at::Tensor& x_in` (with `_in` suffix), then create mutable local copy `at::Tensor x = x_in;` if needed
+- Must define `at::Tensor result = ...;`
+- `EXEC_NPU_CMD(aclnn{op_custom_capital}, {exec_args_str}, result);`
+- `return result;`
+- `PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {{ m.def("{op_custom}", &{op_custom}_impl_npu, "..."); }}`
 
 ---
 
-## File Templates (Structure)
+## Complete Example: Add Operator (x + y → z, both float)
 
-### 1. kernel_src
+### OP_KERNEL
 ```cpp
 #include "kernel_operator.h"
-// [KERNEL_INCLUDES - optional]
 
-[KERNEL_IMPL]  // Your Kernel class goes here
-
-extern "C" __global__ __aicore__ void {op_custom}(
-    {gm_signature}, GM_ADDR workspace, GM_ADDR tiling) {{
-    GET_TILING_DATA(tilingData, tiling);
-    [KERNEL_ENTRY_BODY]  // Your entry code goes here
-}}
-```
-
-### 2. host_tiling_src
-```cpp
-#include "register/tilingdata_base.h"
-// [TILING_INCLUDES - optional]
-
-BEGIN_TILING_DATA_DEF({op_custom_capital}TilingData)
-    [TILING_FIELDS]  // Your fields go here
-END_TILING_DATA_DEF;
-
-REGISTER_TILING_DATA_CLASS({op_custom_capital}, {op_custom_capital}TilingData)
-```
-
-### 3. host_operator_src
-```cpp
-#include "{op_custom}_tiling.h"
-#include "register/op_def_registry.h"
-// [TILING_FUNC_INCLUDES - optional]
-
-namespace optiling {{
-static ge::graphStatus TilingFunc(gert::TilingContext* context) {{
-    [TILING_FUNC_BODY]  // Your tiling logic goes here
-}}
-
-static ge::graphStatus InferShape(gert::InferShapeContext* context) {{
-    [INFER_SHAPE_BODY]  // Your shape inference goes here
-}}
-}}
-```
-
-### 4. python_bind_src
-```cpp
-#include <torch/extension.h>
-#include "aclnn_{op_custom}.h"
-
-at::Tensor {op_custom}_impl_npu({pybind_params}) {{
-    [OUTPUT_ALLOC_CODE]  // Must define 'result'
-    EXEC_NPU_CMD(aclnn{op_custom_capital}, {exec_cmd_args_str}, result);
-    return result;
-}}
-```
-
----
-
-## Complete Example: Add Operator (x + y → z)
-
-Below is a complete working example showing all 6 components for element-wise addition.
-This example demonstrates UB-aware tiling for large tensors.
-
-### KERNEL_IMPL
-```cpp
 using namespace AscendC;
 constexpr int32_t BUFFER_NUM = 2;
 
@@ -702,7 +698,7 @@ public:
                                  uint32_t tileLength) {{
         this->blockLength = totalLength / GetBlockNum();
         this->tileNum = tileNum;
-        this->tileLength = tileLength;  // UB-safe, calculated by TilingFunc
+        this->tileLength = tileLength;
         this->tailLength = this->blockLength - tileNum * BUFFER_NUM * tileLength;
         this->hasTail = (this->tailLength > 0);
 
@@ -790,137 +786,159 @@ private:
     uint32_t blockLength, tileNum, tileLength, tailLength;
     bool hasTail;
 }};
+
+extern "C" __global__ __aicore__ void add_custom(
+    GM_ADDR x, GM_ADDR y, GM_ADDR z, GM_ADDR workspace, GM_ADDR tiling) {{
+    GET_TILING_DATA(tilingData, tiling);
+    KernelAdd op;
+    op.Init(x, y, z, tilingData.totalLength, tilingData.tileNum, tilingData.tileLength);
+    op.Process();
+}}
 ```
 
-### KERNEL_ENTRY_BODY
+### OP_HOST
 ```cpp
-KernelAdd op;
-op.Init(x, y, z, tilingData.totalLength, tilingData.tileNum, tilingData.tileLength);
-op.Process();
-```
+// === add_custom_tiling.h ===
+#ifndef ADD_CUSTOM_TILING_H
+#define ADD_CUSTOM_TILING_H
 
-### TILING_FIELDS
-```
-uint32_t totalLength
-uint32_t tileNum
-uint32_t tileLength
-```
+#include "register/tilingdata_base.h"
 
-Format: `TYPE NAME` or `TYPE NAME[SIZE]` or `struct TYPE NAME`
+namespace optiling {{
+BEGIN_TILING_DATA_DEF(AddCustomTilingData)
+    TILING_DATA_FIELD_DEF(uint32_t, totalLength);
+    TILING_DATA_FIELD_DEF(uint32_t, tileNum);
+    TILING_DATA_FIELD_DEF(uint32_t, tileLength);
+END_TILING_DATA_DEF;
 
-### TILING_FUNC_BODY
-```cpp
-AddCustomTilingData tiling;
-
-auto shape = context->GetInputShape(0)->GetStorageShape();
-uint32_t totalLength = 1;
-for (size_t i = 0; i < shape.GetDimNum(); i++) {{
-    totalLength *= shape.GetDim(i);
+REGISTER_TILING_DATA_CLASS(AddCustom, AddCustomTilingData)
 }}
 
-constexpr uint32_t BLOCK_DIM = 8;
-constexpr uint32_t BUFFER_NUM = 2;
-constexpr uint32_t UB_SIZE = 176 * 1024;  // 176KB usable UB (256KB - 80KB system/TPipe reserve)
-constexpr uint32_t NUM_QUEUES = 3;         // inQueueX + inQueueY + outQueueZ
-
-// Calculate max tileLength that fits in UB
-uint32_t maxTileLength = UB_SIZE / (NUM_QUEUES * BUFFER_NUM * sizeof(float));
-maxTileLength = maxTileLength / 8 * 8;  // Align to 32 bytes (8 floats)
-
-uint32_t blockLength = totalLength / BLOCK_DIM;
-uint32_t tileNum = blockLength / (maxTileLength * BUFFER_NUM);
-if (tileNum == 0) tileNum = 1;
-uint32_t tileLength = blockLength / (tileNum * BUFFER_NUM);
-tileLength = tileLength / 8 * 8;  // Align to 32 bytes
-
-tiling.set_totalLength(totalLength);
-tiling.set_tileNum(tileNum);
-tiling.set_tileLength(tileLength);
-
-tiling.SaveToBuffer(context->GetRawTilingData()->GetData(),
-                    context->GetRawTilingData()->GetCapacity());
-context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
-context->SetBlockDim(BLOCK_DIM);
-
-size_t* currentWorkspace = context->GetWorkspaceSizes(1);
-currentWorkspace[0] = 0;
-
-return ge::GRAPH_SUCCESS;
+#endif  // ADD_CUSTOM_TILING_H
 ```
-
-### INFER_SHAPE_BODY
 ```cpp
-const gert::Shape* x_shape = context->GetInputShape(0);
-gert::Shape* y_shape = context->GetOutputShape(0);
-*y_shape = *x_shape;
-return ge::GRAPH_SUCCESS;
+// === add_custom.cpp ===
+#include "add_custom_tiling.h"
+#include "register/op_def_registry.h"
+
+namespace optiling {{
+
+static ge::graphStatus TilingFunc(gert::TilingContext* context) {{
+    AddCustomTilingData tiling;
+
+    auto shape = context->GetInputShape(0)->GetStorageShape();
+    uint32_t totalLength = shape.GetShapeSize();
+
+    constexpr uint32_t BLOCK_DIM = 8;
+    constexpr uint32_t BUFFER_NUM = 2;
+    constexpr uint32_t UB_SIZE = 176 * 1024;  // 176KB usable UB
+    constexpr uint32_t NUM_QUEUES = 3;         // inQueueX + inQueueY + outQueueZ
+
+    uint32_t maxTileLength = UB_SIZE / (NUM_QUEUES * BUFFER_NUM * sizeof(float));
+    maxTileLength = maxTileLength / 8 * 8;
+
+    uint32_t blockLength = totalLength / BLOCK_DIM;
+    uint32_t tileNum = blockLength / (maxTileLength * BUFFER_NUM);
+    if (tileNum == 0) tileNum = 1;
+    uint32_t tileLength = blockLength / (tileNum * BUFFER_NUM);
+    tileLength = tileLength / 8 * 8;
+
+    tiling.set_totalLength(totalLength);
+    tiling.set_tileNum(tileNum);
+    tiling.set_tileLength(tileLength);
+
+    tiling.SaveToBuffer(context->GetRawTilingData()->GetData(),
+                        context->GetRawTilingData()->GetCapacity());
+    context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
+    context->SetBlockDim(BLOCK_DIM);
+
+    size_t* currentWorkspace = context->GetWorkspaceSizes(1);
+    currentWorkspace[0] = 0;
+
+    return ge::GRAPH_SUCCESS;
+}}
+
+}}
+
+namespace ge {{
+
+static ge::graphStatus InferShape(gert::InferShapeContext* context) {{
+    const gert::Shape* x_shape = context->GetInputShape(0);
+    gert::Shape* z_shape = context->GetOutputShape(0);
+    *z_shape = *x_shape;
+    return ge::GRAPH_SUCCESS;
+}}
+
+}}
+
+namespace ops {{
+
+class AddCustom : public OpDef {{
+public:
+    explicit AddCustom(const char* name) : OpDef(name) {{
+        this->Input("x").ParamType(REQUIRED).DataType({{ge::DT_FLOAT}}).Format({{ge::FORMAT_ND}});
+        this->Input("y").ParamType(REQUIRED).DataType({{ge::DT_FLOAT}}).Format({{ge::FORMAT_ND}});
+        this->Output("z").ParamType(REQUIRED).DataType({{ge::DT_FLOAT}}).Format({{ge::FORMAT_ND}});
+        this->SetInferShape(ge::InferShape);
+        this->AICore().SetTiling(optiling::TilingFunc);
+        this->AICore().AddConfig("ascend910b");
+    }}
+}};
+
+OP_ADD(AddCustom);
+
+}}
 ```
 
-### OUTPUT_ALLOC_CODE
+### PYBINDING
 ```cpp
-at::Tensor result = at::empty_like({first_input});
+#include <torch/library.h>
+#include "pytorch_npu_helper.hpp"
+
+at::Tensor add_custom_impl_npu(const at::Tensor& x_in, const at::Tensor& y_in) {{
+    at::Tensor x = x_in;
+    at::Tensor y = y_in;
+    at::Tensor result = at::empty_like(x);
+    EXEC_NPU_CMD(aclnnAddCustom, x, y, result);
+    return result;
+}}
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {{
+    m.def("add_custom", &add_custom_impl_npu, "add operator");
+}}
 ```
-
----
-
-## Optional Components
-
-- **KERNEL_INCLUDES**: Extra kernel headers (e.g., `lib/matmul_intf.h`)
-- **TILING_INCLUDES**: Extra tiling headers (e.g., `tiling/platform/platform_ascendc.h` for `TCubeTiling`)
-- **TILING_FUNC_INCLUDES**: Extra TilingFunc headers
 """
         return spec
 
     def format_solution_components(self, solution: "Solution") -> str:
-        """格式化 solution 的 6 个组件为可读的字符串"""
+        """格式化 solution 的源文件为可读字符串（3 section 格式）"""
         if not solution.other_info:
             return "(empty solution)"
 
         info = solution.other_info
+        op_name_snake = self.op_name.replace("-", "_").lower()
+        op_custom = f"{op_name_snake}_custom"
         parts = []
 
-        if info.get("kernel_impl"):
-            parts.append(f"### KERNEL_IMPL\n```cpp\n{info['kernel_impl']}\n```")
+        if info.get("op_kernel"):
+            parts.append(f"### OP_KERNEL\n```cpp\n{info['op_kernel']}\n```")
 
-        if info.get("kernel_entry_body"):
-            parts.append(f"### KERNEL_ENTRY_BODY\n```cpp\n{info['kernel_entry_body']}\n```")
+        host_parts = []
+        if info.get("op_host_tiling"):
+            host_parts.append(
+                f"```cpp\n// === {op_custom}_tiling.h ===\n{info['op_host_tiling']}\n```"
+            )
+        if info.get("op_host"):
+            host_parts.append(
+                f"```cpp\n// === {op_custom}.cpp ===\n{info['op_host']}\n```"
+            )
+        if host_parts:
+            parts.append("### OP_HOST\n" + "\n".join(host_parts))
 
-        if info.get("tiling_fields"):
-            fields_str = self._format_tiling_fields(info["tiling_fields"])
-            parts.append(f"### TILING_FIELDS\n```\n{fields_str}\n```")
-
-        if info.get("tiling_func_body"):
-            parts.append(f"### TILING_FUNC_BODY\n```cpp\n{info['tiling_func_body']}\n```")
-
-        if info.get("infer_shape_body"):
-            parts.append(f"### INFER_SHAPE_BODY\n```cpp\n{info['infer_shape_body']}\n```")
-
-        if info.get("output_alloc_code"):
-            parts.append(f"### OUTPUT_ALLOC_CODE\n```cpp\n{info['output_alloc_code']}\n```")
+        if info.get("pybinding"):
+            parts.append(f"### PYBINDING\n```cpp\n{info['pybinding']}\n```")
 
         return "\n\n".join(parts) if parts else "(no components)"
-
-    def _format_tiling_fields(self, fields) -> str:
-        """将 tiling_fields 列表格式化为文本格式
-
-        Args:
-            fields: Either a list of field dicts, or a dict with "fields" and "includes" keys.
-        """
-        # Handle dict format with embedded includes
-        if isinstance(fields, dict):
-            fields = fields.get("fields", [])
-        lines = []
-        for field in fields:
-            if field.get("is_struct"):
-                # struct TYPE NAME
-                lines.append(f"struct {field['type']} {field['name']}")
-            elif field.get("size"):
-                # TYPE NAME[SIZE]
-                lines.append(f"{field['type']} {field['name']}[{field['size']}]")
-            else:
-                # TYPE NAME
-                lines.append(f"{field['type']} {field['name']}")
-        return "\n".join(lines)
 
     def _make_result(
         self,
@@ -1104,7 +1122,7 @@ at::Tensor result = at::empty_like({first_input});
         return self._make_result(
             valid=False,
             stage="validation",
-            error="CANNInitTask requires evaluate_solution() with other_info containing tiling_fields, tiling_func_body, infer_shape_body",
+            error="CANNInitTask requires evaluate_solution() with other_info containing op_kernel, op_host_tiling, op_host, pybinding",
         )
 
     def evaluate(self, solution: Solution) -> EvaluationResult:
@@ -1125,32 +1143,28 @@ at::Tensor result = at::empty_like({first_input});
                 evaluator = AscendCEvaluator(project_path=project_path, device=self.npu_type, verbose=self.verbose)
                 return self._evaluate_from_loaded(evaluator, config)
 
-            # 验证必要字段 (6 个组件都必须提供)
+            # 验证必要字段 (4 个完整源文件都必须提供)
             required_fields = [
-                config.tiling_fields,
-                config.tiling_func_body,
-                config.infer_shape_body,
-                config.output_alloc_code,
-                config.kernel_impl,
-                config.kernel_entry_body,
+                config.op_kernel,
+                config.op_host_tiling,
+                config.op_host,
+                config.pybinding,
             ]
             if not all(required_fields):
                 return self._make_result(
                     valid=False,
                     stage="validation",
-                    error="Missing required fields: tiling_fields, tiling_func_body, infer_shape_body, output_alloc_code, kernel_impl, kernel_entry_body",
+                    error="Missing required fields: op_kernel, op_host_tiling, op_host, pybinding",
                     kernel_src=kernel_src,
                 )
 
             # 生成完整代码
             full_code = self._template_gen.generate(
-                kernel_impl=config.kernel_impl,
-                kernel_entry_body=config.kernel_entry_body,
-                tiling_fields=config.tiling_fields,
-                tiling_func_body=config.tiling_func_body,
-                infer_shape_body=config.infer_shape_body,
+                op_kernel=config.op_kernel,
+                op_host_tiling=config.op_host_tiling,
+                op_host=config.op_host,
+                pybinding=config.pybinding,
                 project_path=project_path,
-                output_alloc_code=config.output_alloc_code,
             )
 
             # fake_mode: 仅写入文件

@@ -4,7 +4,7 @@
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 
 @dataclass
@@ -65,36 +65,23 @@ class CompileResult:
 
 @dataclass
 class CANNSolutionConfig:
-    """CANN Solution 配置，包含 LLM 生成的组件和执行控制参数。
+    """CANN Solution 配置，包含 LLM 生成的完整源文件和执行控制参数。
 
-    LLM 生成组件按目标文件分组：
-    - Kernel (Device): kernel_impl + kernel_entry_body → kernel_src
-    - Host Tiling: tiling_fields → host_tiling_src
-    - Host Operator: tiling_func_body + infer_shape_body → host_operator_src
-    - Python Bind: output_alloc_code → python_bind_src
+    LLM 生成 3 个逻辑单元（4 个物理文件）：
+    - OP_KERNEL:     op_kernel/*.cpp           (完整 kernel 源文件)
+    - OP_HOST:       op_host/*_tiling.h        (完整 tiling header)
+                     op_host/*.cpp             (完整 host 源文件)
+    - PYBINDING:     CppExtension/csrc/op.cpp  (完整 pybinding 源文件)
     """
 
     # === Project Config ===
     project_path: Optional[str] = None
 
-    # === Kernel (Device side) - generates kernel_src ===
-    # Template: #include + kernel_impl + entry function(signature + GET_TILING_DATA + body)
-    kernel_impl: Optional[str] = None           # Kernel class and helper code (may contain #include)
-    kernel_entry_body: Optional[str] = None     # Entry function body (after GET_TILING_DATA)
-
-    # === Host Tiling - generates host_tiling_src ===
-    # Template: #include + BEGIN_TILING_DATA_DEF + fields + END_TILING_DATA_DEF
-    # Accepts list of field dicts, or dict with "fields" + optional "includes"
-    tiling_fields: Optional[Any] = None
-
-    # === Host Operator - generates host_operator_src ===
-    # Template: #include + TilingFunc + InferShape + IMPL_OP
-    tiling_func_body: Optional[str] = None      # TilingFunc body (may contain #include at top)
-    infer_shape_body: Optional[str] = None      # InferShape function body
-
-    # === Python Bind - generates python_bind_src ===
-    # Template: impl function(alloc + EXEC_NPU_CMD) + PYBIND11_MODULE
-    output_alloc_code: Optional[str] = None     # Output tensor allocation code
+    # === Complete source files (LLM-generated) ===
+    op_kernel: Optional[str] = None       # Complete op_kernel/*.cpp
+    op_host_tiling: Optional[str] = None  # Complete op_host/*_tiling.h
+    op_host: Optional[str] = None         # Complete op_host/*.cpp
+    pybinding: Optional[str] = None       # Complete CppExtension/csrc/op.cpp
 
     # === Execution control ===
     compile_only: bool = False                  # Only compile, skip correctness/performance
@@ -111,16 +98,11 @@ class CANNSolutionConfig:
         return cls(
             # Project config
             project_path=d.get("project_path"),
-            # Kernel (Device)
-            kernel_impl=d.get("kernel_impl"),
-            kernel_entry_body=d.get("kernel_entry_body"),
-            # Host Tiling
-            tiling_fields=d.get("tiling_fields"),
-            # Host Operator
-            tiling_func_body=d.get("tiling_func_body"),
-            infer_shape_body=d.get("infer_shape_body"),
-            # Python Bind
-            output_alloc_code=d.get("output_alloc_code"),
+            # Complete source files
+            op_kernel=d.get("op_kernel"),
+            op_host_tiling=d.get("op_host_tiling"),
+            op_host=d.get("op_host"),
+            pybinding=d.get("pybinding"),
             # Execution control
             compile_only=d.get("compile_only", False),
             load_from=d.get("load_from"),
@@ -136,25 +118,15 @@ class CANNSolutionConfig:
         if self.project_path is not None:
             result["project_path"] = self.project_path
 
-        # Kernel (Device)
-        if self.kernel_impl is not None:
-            result["kernel_impl"] = self.kernel_impl
-        if self.kernel_entry_body is not None:
-            result["kernel_entry_body"] = self.kernel_entry_body
-
-        # Host Tiling
-        if self.tiling_fields is not None:
-            result["tiling_fields"] = self.tiling_fields
-
-        # Host Operator
-        if self.tiling_func_body is not None:
-            result["tiling_func_body"] = self.tiling_func_body
-        if self.infer_shape_body is not None:
-            result["infer_shape_body"] = self.infer_shape_body
-
-        # Python Bind
-        if self.output_alloc_code is not None:
-            result["output_alloc_code"] = self.output_alloc_code
+        # Complete source files
+        if self.op_kernel is not None:
+            result["op_kernel"] = self.op_kernel
+        if self.op_host_tiling is not None:
+            result["op_host_tiling"] = self.op_host_tiling
+        if self.op_host is not None:
+            result["op_host"] = self.op_host
+        if self.pybinding is not None:
+            result["pybinding"] = self.pybinding
 
         # Execution control
         if self.compile_only:

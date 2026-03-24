@@ -1,6 +1,6 @@
 ## Curated Example: Standard 2D Convolution (im2col + Matmul Pattern)
 
-This example demonstrates all 6 components for conv2d with square input and square kernel,
+This example demonstrates all 3 file components for conv2d with square input and square kernel,
 decomposed as im2col (rearrange input into column matrix) + Matmul on the Cube unit.
 
 ```
@@ -9,9 +9,13 @@ Weight [C_out, C_in, kH, kW] → reshape → [C_out, C_in*kH*kW]
 Output = ColMatrix × Weight^T → reshape → [N, C_out, H_out, W_out]
 ```
 
-### KERNEL_IMPL
+### OP_KERNEL
+
+`op_kernel/conv_standard2d_square_input_square_kernel_custom.cpp`:
 ```cpp
+#include "kernel_operator.h"
 #include "lib/matmul_intf.h"
+
 using namespace AscendC;
 constexpr int32_t BUFFER_NUM = 2;
 
@@ -112,134 +116,187 @@ private:
     TQue<QuePosition::VECIN, BUFFER_NUM> colQueue;
     uint32_t N, C_in, H, W, C_out, kH, kW, stride, pad, H_out, W_out;
 };
+
+extern "C" __global__ __aicore__ void conv_standard2d_square_input_square_kernel_custom(GM_ADDR input, GM_ADDR weight, GM_ADDR output, GM_ADDR workspace, GM_ADDR tiling) {
+    GET_TILING_DATA(tilingData, tiling);
+    KernelConv2d op;
+    op.Init(input, weight, output, workspace,
+            tilingData.cubeTiling,
+            tilingData.N, tilingData.C_in, tilingData.H, tilingData.W,
+            tilingData.C_out, tilingData.kH, tilingData.kW,
+            tilingData.stride, tilingData.pad,
+            tilingData.H_out, tilingData.W_out);
+    op.Process();
+}
 ```
 
-### KERNEL_ENTRY_BODY
+### OP_HOST
+
+`op_host/conv_standard2d_square_input_square_kernel_custom_tiling.h`:
 ```cpp
-KernelConv2d op;
-op.Init(input, weight, output, workspace,
-        tilingData.cubeTiling,
-        tilingData.N, tilingData.C_in, tilingData.H, tilingData.W,
-        tilingData.C_out, tilingData.kH, tilingData.kW,
-        tilingData.stride, tilingData.pad,
-        tilingData.H_out, tilingData.W_out);
-op.Process();
-```
+#ifndef CONV_STANDARD2D_SQUARE_INPUT_SQUARE_KERNEL_CUSTOM_TILING_H
+#define CONV_STANDARD2D_SQUARE_INPUT_SQUARE_KERNEL_CUSTOM_TILING_H
 
-### TILING_FIELDS
-```
-struct TCubeTiling cubeTiling
-uint32_t N
-uint32_t C_in
-uint32_t H
-uint32_t W
-uint32_t C_out
-uint32_t kH
-uint32_t kW
-uint32_t stride
-uint32_t pad
-uint32_t H_out
-uint32_t W_out
-```
-
-### TILING_FUNC_BODY
-```cpp
-ConvStandard2dSquareInputSquareKernelCustomTilingData tiling;
-
-auto inShape = context->GetInputShape(0)->GetStorageShape();  // [N, C_in, H, W]
-auto wShape = context->GetInputShape(1)->GetStorageShape();    // [C_out, C_in, kH, kW]
-
-uint32_t N = inShape.GetDim(0);
-uint32_t C_in = inShape.GetDim(1);
-uint32_t H = inShape.GetDim(2);
-uint32_t W = inShape.GetDim(3);
-uint32_t C_out = wShape.GetDim(0);
-uint32_t kH = wShape.GetDim(2);
-uint32_t kW = wShape.GetDim(3);
-
-// Get stride and padding from attrs
-const auto* attrs = context->GetAttrs();
-uint32_t stride = *(reinterpret_cast<const int*>(attrs->GetAttrPointer(0)));
-uint32_t pad = *(reinterpret_cast<const int*>(attrs->GetAttrPointer(1)));
-
-uint32_t H_out = (H + 2 * pad - kH) / stride + 1;
-uint32_t W_out = (W + 2 * pad - kW) / stride + 1;
-
-uint32_t M = N * H_out * W_out;
-uint32_t K = C_in * kH * kW;
-
-tiling.set_N(N); tiling.set_C_in(C_in);
-tiling.set_H(H); tiling.set_W(W);
-tiling.set_C_out(C_out);
-tiling.set_kH(kH); tiling.set_kW(kW);
-tiling.set_stride(stride); tiling.set_pad(pad);
-tiling.set_H_out(H_out); tiling.set_W_out(W_out);
-
-// Cube tiling for ColMatrix[M, K] × Weight^T[K, C_out] → Output[M, C_out]
-auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
-matmul_tiling::MatmulApiTiling matmulTiling(platform);
-matmulTiling.SetAType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND, matmul_tiling::DataType::DT_FLOAT16);
-matmulTiling.SetBType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND, matmul_tiling::DataType::DT_FLOAT16);
-matmulTiling.SetCType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND, matmul_tiling::DataType::DT_FLOAT);
-matmulTiling.SetShape(M, C_out, K);  // parameter order: M, N, K
-matmulTiling.SetFixSplit(-1, -1, -1);
-
-TCubeTiling cubeTiling;
-int64_t matmulWsSize = matmulTiling.GetTiling(cubeTiling);  // returns workspace size
-tiling.cubeTiling = cubeTiling;  // struct fields: direct assign (no set_ method)
-
-tiling.SaveToBuffer(context->GetRawTilingData()->GetData(),
-                    context->GetRawTilingData()->GetCapacity());
-context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
-context->SetBlockDim(1);
-
-// Workspace: im2col buffer + matmul workspace
-size_t* ws = context->GetWorkspaceSizes(1);
-ws[0] = M * K * sizeof(uint16_t) + static_cast<size_t>(matmulWsSize);
-
-return ge::GRAPH_SUCCESS;
-```
-
-### INFER_SHAPE_BODY
-```cpp
-const gert::Shape* inShape = context->GetInputShape(0);
-const gert::Shape* wShape = context->GetInputShape(1);
-gert::Shape* outShape = context->GetOutputShape(0);
-outShape->SetDimNum(4);
-outShape->SetDim(0, inShape->GetDim(0));   // N
-outShape->SetDim(1, wShape->GetDim(0));    // C_out
-// H_out, W_out: conservative upper bound (actual values computed in TilingFunc)
-int64_t H = inShape->GetDim(2), W = inShape->GetDim(3);
-int64_t kH = wShape->GetDim(2), kW = wShape->GetDim(3);
-outShape->SetDim(2, H - kH + 1);  // stride=1, pad=0 default
-outShape->SetDim(3, W - kW + 1);
-return ge::GRAPH_SUCCESS;
-```
-
-### OUTPUT_ALLOC_CODE
-```cpp
-int64_t N = input.size(0);
-int64_t C_out = weight.size(0);
-int64_t H = input.size(2), W = input.size(3);
-int64_t kH = weight.size(2), kW = weight.size(3);
-// stride and padding from init params
-int64_t H_out = (H + 2 * padding - kH) / stride + 1;
-int64_t W_out = (W + 2 * padding - kW) / stride + 1;
-at::Tensor result = at::empty({N, C_out, H_out, W_out}, input.options().dtype(at::kFloat));
-```
-
-### KERNEL_INCLUDES
-```cpp
-#include "lib/matmul_intf.h"
-```
-
-### TILING_INCLUDES
-```cpp
+#include "register/tilingdata_base.h"
 #include "lib/matmul/matmul_tiling.h"
+
+namespace optiling {
+BEGIN_TILING_DATA_DEF(ConvStandard2dSquareInputSquareKernelCustomTilingData)
+    TILING_DATA_FIELD_DEF_STRUCT(TCubeTiling, cubeTiling);
+    TILING_DATA_FIELD_DEF(uint32_t, N);
+    TILING_DATA_FIELD_DEF(uint32_t, C_in);
+    TILING_DATA_FIELD_DEF(uint32_t, H);
+    TILING_DATA_FIELD_DEF(uint32_t, W);
+    TILING_DATA_FIELD_DEF(uint32_t, C_out);
+    TILING_DATA_FIELD_DEF(uint32_t, kH);
+    TILING_DATA_FIELD_DEF(uint32_t, kW);
+    TILING_DATA_FIELD_DEF(uint32_t, stride);
+    TILING_DATA_FIELD_DEF(uint32_t, pad);
+    TILING_DATA_FIELD_DEF(uint32_t, H_out);
+    TILING_DATA_FIELD_DEF(uint32_t, W_out);
+END_TILING_DATA_DEF;
+
+REGISTER_TILING_DATA_CLASS(ConvStandard2dSquareInputSquareKernelCustom, ConvStandard2dSquareInputSquareKernelCustomTilingData)
+}
+
+#endif  // CONV_STANDARD2D_SQUARE_INPUT_SQUARE_KERNEL_CUSTOM_TILING_H
 ```
 
-### TILING_FUNC_INCLUDES
+`op_host/conv_standard2d_square_input_square_kernel_custom.cpp`:
 ```cpp
+#include "conv_standard2d_square_input_square_kernel_custom_tiling.h"
+#include "register/op_def_registry.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "lib/matmul/matmul_tiling.h"
+
+namespace optiling {
+
+static ge::graphStatus TilingFunc(gert::TilingContext* context) {
+    ConvStandard2dSquareInputSquareKernelCustomTilingData tiling;
+
+    auto inShape = context->GetInputShape(0)->GetStorageShape();  // [N, C_in, H, W]
+    auto wShape = context->GetInputShape(1)->GetStorageShape();    // [C_out, C_in, kH, kW]
+
+    uint32_t N = inShape.GetDim(0);
+    uint32_t C_in = inShape.GetDim(1);
+    uint32_t H = inShape.GetDim(2);
+    uint32_t W = inShape.GetDim(3);
+    uint32_t C_out = wShape.GetDim(0);
+    uint32_t kH = wShape.GetDim(2);
+    uint32_t kW = wShape.GetDim(3);
+
+    // Get stride and padding from attrs
+    const auto* attrs = context->GetAttrs();
+    uint32_t stride = *(reinterpret_cast<const int*>(attrs->GetAttrPointer(0)));
+    uint32_t pad = *(reinterpret_cast<const int*>(attrs->GetAttrPointer(1)));
+
+    uint32_t H_out = (H + 2 * pad - kH) / stride + 1;
+    uint32_t W_out = (W + 2 * pad - kW) / stride + 1;
+
+    uint32_t M = N * H_out * W_out;
+    uint32_t K = C_in * kH * kW;
+
+    tiling.set_N(N); tiling.set_C_in(C_in);
+    tiling.set_H(H); tiling.set_W(W);
+    tiling.set_C_out(C_out);
+    tiling.set_kH(kH); tiling.set_kW(kW);
+    tiling.set_stride(stride); tiling.set_pad(pad);
+    tiling.set_H_out(H_out); tiling.set_W_out(W_out);
+
+    // Cube tiling for ColMatrix[M, K] × Weight^T[K, C_out] → Output[M, C_out]
+    auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    matmul_tiling::MatmulApiTiling matmulTiling(platform);
+    matmulTiling.SetAType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND, matmul_tiling::DataType::DT_FLOAT16);
+    matmulTiling.SetBType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND, matmul_tiling::DataType::DT_FLOAT16);
+    matmulTiling.SetCType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND, matmul_tiling::DataType::DT_FLOAT);
+    matmulTiling.SetShape(M, C_out, K);  // parameter order: M, N, K
+    matmulTiling.SetFixSplit(-1, -1, -1);
+
+    TCubeTiling cubeTiling;
+    int64_t matmulWsSize = matmulTiling.GetTiling(cubeTiling);  // returns workspace size
+    tiling.cubeTiling = cubeTiling;  // struct fields: direct assign (no set_ method)
+
+    tiling.SaveToBuffer(context->GetRawTilingData()->GetData(),
+                        context->GetRawTilingData()->GetCapacity());
+    context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
+    context->SetBlockDim(1);
+
+    // Workspace: im2col buffer + matmul workspace
+    size_t* ws = context->GetWorkspaceSizes(1);
+    ws[0] = M * K * sizeof(uint16_t) + static_cast<size_t>(matmulWsSize);
+
+    return ge::GRAPH_SUCCESS;
+}
+
+}
+
+namespace ge {
+
+static ge::graphStatus InferShape(gert::InferShapeContext* context) {
+    const gert::Shape* inShape = context->GetInputShape(0);
+    const gert::Shape* wShape = context->GetInputShape(1);
+    gert::Shape* outShape = context->GetOutputShape(0);
+    outShape->SetDimNum(4);
+    outShape->SetDim(0, inShape->GetDim(0));   // N
+    outShape->SetDim(1, wShape->GetDim(0));    // C_out
+    // H_out, W_out: conservative upper bound (actual values computed in TilingFunc)
+    int64_t H = inShape->GetDim(2), W = inShape->GetDim(3);
+    int64_t kH = wShape->GetDim(2), kW = wShape->GetDim(3);
+    outShape->SetDim(2, H - kH + 1);  // stride=1, pad=0 default
+    outShape->SetDim(3, W - kW + 1);
+    return ge::GRAPH_SUCCESS;
+}
+
+}
+
+namespace ops {
+
+class ConvStandard2dSquareInputSquareKernelCustom : public OpDef {
+public:
+    explicit ConvStandard2dSquareInputSquareKernelCustom(const char* name) : OpDef(name) {
+        this->Input("input").ParamType(REQUIRED).DataType({ge::DT_FLOAT16}).Format({ge::FORMAT_ND});
+        this->Input("weight").ParamType(REQUIRED).DataType({ge::DT_FLOAT16}).Format({ge::FORMAT_ND});
+        this->Output("output").ParamType(REQUIRED).DataType({ge::DT_FLOAT}).Format({ge::FORMAT_ND});
+        this->Attr("stride").Int();
+        this->Attr("padding").Int();
+        this->SetInferShape(ge::InferShape);
+        this->AICore().SetTiling(optiling::TilingFunc);
+        this->AICore().AddConfig("ascend910b");
+    }
+};
+
+OP_ADD(ConvStandard2dSquareInputSquareKernelCustom);
+
+}
+```
+
+### PYBINDING
+
+`CppExtension/csrc/op.cpp`:
+```cpp
+#include <torch/library.h>
+#include "pytorch_npu_helper.hpp"
+
+at::Tensor conv_standard2d_square_input_square_kernel_custom_impl_npu(
+        const at::Tensor& input_in, const at::Tensor& weight_in,
+        int64_t stride, int64_t padding) {
+    at::Tensor input = input_in.to(at::kHalf);
+    at::Tensor weight = weight_in.to(at::kHalf);
+    int64_t N = input.size(0);
+    int64_t C_out = weight.size(0);
+    int64_t H = input.size(2), W = input.size(3);
+    int64_t kH = weight.size(2), kW = weight.size(3);
+    // stride and padding from init params
+    int64_t H_out = (H + 2 * padding - kH) / stride + 1;
+    int64_t W_out = (W + 2 * padding - kW) / stride + 1;
+    at::Tensor result = at::empty({N, C_out, H_out, W_out}, input.options().dtype(at::kFloat));
+    EXEC_NPU_CMD(aclnnConvStandard2dSquareInputSquareKernelCustom, input, weight, result);
+    return result;
+}
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("conv_standard2d_square_input_square_kernel_custom",
+          &conv_standard2d_square_input_square_kernel_custom_impl_npu,
+          "conv_standard2d_square_input_square_kernel_custom operator");
+}
 ```

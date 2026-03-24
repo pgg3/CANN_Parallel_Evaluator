@@ -1,7 +1,11 @@
 ## Complete Example: Add Operator (elementwise binary: x + y → z)
 
-### KERNEL_IMPL
+### OP_KERNEL
+
+`op_kernel/add_custom.cpp`:
 ```cpp
+#include "kernel_operator.h"
+
 using namespace AscendC;
 constexpr int32_t BUFFER_NUM = 2;
 
@@ -101,70 +105,130 @@ private:
     uint32_t blockLength, tileNum, tileLength, tailLength;
     bool hasTail;
 };
+
+extern "C" __global__ __aicore__ void add_custom(GM_ADDR x, GM_ADDR y, GM_ADDR z, GM_ADDR workspace, GM_ADDR tiling) {
+    GET_TILING_DATA(tilingData, tiling);
+    KernelAdd op;
+    op.Init(x, y, z, tilingData.totalLength, tilingData.tileNum, tilingData.tileLength);
+    op.Process();
+}
 ```
 
-### KERNEL_ENTRY_BODY
+### OP_HOST
+
+`op_host/add_custom_tiling.h`:
 ```cpp
-KernelAdd op;
-op.Init(x, y, z, tilingData.totalLength, tilingData.tileNum, tilingData.tileLength);
-op.Process();
-```
+#ifndef ADD_CUSTOM_TILING_H
+#define ADD_CUSTOM_TILING_H
 
-### TILING_FIELDS
-```
-uint32_t totalLength
-uint32_t tileNum
-uint32_t tileLength
-```
+#include "register/tilingdata_base.h"
 
-### TILING_FUNC_BODY
-```cpp
-AddCustomTilingData tiling;
+namespace optiling {
+BEGIN_TILING_DATA_DEF(AddCustomTilingData)
+    TILING_DATA_FIELD_DEF(uint32_t, totalLength);
+    TILING_DATA_FIELD_DEF(uint32_t, tileNum);
+    TILING_DATA_FIELD_DEF(uint32_t, tileLength);
+END_TILING_DATA_DEF;
 
-auto shape = context->GetInputShape(0)->GetStorageShape();
-uint32_t totalLength = 1;
-for (size_t i = 0; i < shape.GetDimNum(); i++) {
-    totalLength *= shape.GetDim(i);
+REGISTER_TILING_DATA_CLASS(AddCustom, AddCustomTilingData)
 }
 
-constexpr uint32_t BLOCK_DIM = 8;
-constexpr uint32_t BUFFER_NUM = 2;
-constexpr uint32_t UB_SIZE = 176 * 1024;
-constexpr uint32_t NUM_QUEUES = 3;  // inQueueX + inQueueY + outQueueZ
-
-uint32_t maxTileLength = UB_SIZE / (NUM_QUEUES * BUFFER_NUM * sizeof(float));
-maxTileLength = maxTileLength / 8 * 8;
-
-uint32_t blockLength = totalLength / BLOCK_DIM;
-uint32_t tileNum = blockLength / (maxTileLength * BUFFER_NUM);
-if (tileNum == 0) tileNum = 1;
-uint32_t tileLength = blockLength / (tileNum * BUFFER_NUM);
-tileLength = tileLength / 8 * 8;
-
-tiling.set_totalLength(totalLength);
-tiling.set_tileNum(tileNum);
-tiling.set_tileLength(tileLength);
-
-tiling.SaveToBuffer(context->GetRawTilingData()->GetData(),
-                    context->GetRawTilingData()->GetCapacity());
-context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
-context->SetBlockDim(BLOCK_DIM);
-
-size_t* currentWorkspace = context->GetWorkspaceSizes(1);
-currentWorkspace[0] = 0;
-
-return ge::GRAPH_SUCCESS;
+#endif  // ADD_CUSTOM_TILING_H
 ```
 
-### INFER_SHAPE_BODY
+`op_host/add_custom.cpp`:
 ```cpp
-const gert::Shape* x_shape = context->GetInputShape(0);
-gert::Shape* y_shape = context->GetOutputShape(0);
-*y_shape = *x_shape;
-return ge::GRAPH_SUCCESS;
+#include "add_custom_tiling.h"
+#include "register/op_def_registry.h"
+
+namespace optiling {
+
+static ge::graphStatus TilingFunc(gert::TilingContext* context) {
+    AddCustomTilingData tiling;
+
+    auto shape = context->GetInputShape(0)->GetStorageShape();
+    uint32_t totalLength = 1;
+    for (size_t i = 0; i < shape.GetDimNum(); i++) {
+        totalLength *= shape.GetDim(i);
+    }
+
+    constexpr uint32_t BLOCK_DIM = 8;
+    constexpr uint32_t BUFFER_NUM = 2;
+    constexpr uint32_t UB_SIZE = 176 * 1024;
+    constexpr uint32_t NUM_QUEUES = 3;  // inQueueX + inQueueY + outQueueZ
+
+    uint32_t maxTileLength = UB_SIZE / (NUM_QUEUES * BUFFER_NUM * sizeof(float));
+    maxTileLength = maxTileLength / 8 * 8;
+
+    uint32_t blockLength = totalLength / BLOCK_DIM;
+    uint32_t tileNum = blockLength / (maxTileLength * BUFFER_NUM);
+    if (tileNum == 0) tileNum = 1;
+    uint32_t tileLength = blockLength / (tileNum * BUFFER_NUM);
+    tileLength = tileLength / 8 * 8;
+
+    tiling.set_totalLength(totalLength);
+    tiling.set_tileNum(tileNum);
+    tiling.set_tileLength(tileLength);
+
+    tiling.SaveToBuffer(context->GetRawTilingData()->GetData(),
+                        context->GetRawTilingData()->GetCapacity());
+    context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
+    context->SetBlockDim(BLOCK_DIM);
+
+    size_t* currentWorkspace = context->GetWorkspaceSizes(1);
+    currentWorkspace[0] = 0;
+
+    return ge::GRAPH_SUCCESS;
+}
+
+}
+
+namespace ge {
+
+static ge::graphStatus InferShape(gert::InferShapeContext* context) {
+    const gert::Shape* x_shape = context->GetInputShape(0);
+    gert::Shape* y_shape = context->GetOutputShape(0);
+    *y_shape = *x_shape;
+    return ge::GRAPH_SUCCESS;
+}
+
+}
+
+namespace ops {
+
+class AddCustom : public OpDef {
+public:
+    explicit AddCustom(const char* name) : OpDef(name) {
+        this->Input("x").ParamType(REQUIRED).DataType({ge::DT_FLOAT}).Format({ge::FORMAT_ND});
+        this->Input("y").ParamType(REQUIRED).DataType({ge::DT_FLOAT}).Format({ge::FORMAT_ND});
+        this->Output("z").ParamType(REQUIRED).DataType({ge::DT_FLOAT}).Format({ge::FORMAT_ND});
+        this->SetInferShape(ge::InferShape);
+        this->AICore().SetTiling(optiling::TilingFunc);
+        this->AICore().AddConfig("ascend910b");
+    }
+};
+
+OP_ADD(AddCustom);
+
+}
 ```
 
-### OUTPUT_ALLOC_CODE
+### PYBINDING
+
+`CppExtension/csrc/op.cpp`:
 ```cpp
-at::Tensor result = at::empty_like(x);
+#include <torch/library.h>
+#include "pytorch_npu_helper.hpp"
+
+at::Tensor add_custom_impl_npu(const at::Tensor& x_in, const at::Tensor& y_in) {
+    at::Tensor x = x_in;
+    at::Tensor y = y_in;
+    at::Tensor result = at::empty_like(x);
+    EXEC_NPU_CMD(aclnnAddCustom, x, y, result);
+    return result;
+}
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("add_custom", &add_custom_impl_npu, "add_custom operator");
+}
 ```
