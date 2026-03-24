@@ -36,7 +36,7 @@ uv pip install -e .
 
 框架支持两种 Python Reference 格式（自动检测）：
 - **org 格式** — Model 类 + `get_inputs` / `get_init_inputs`（[relu_org.py](examples/relu_org.py)）
-- **fn 格式** — `module_fn` + Model 代理调用（[elu_fn.py](examples/elu_fn.py)）
+- **fn 格式** — `module_fn` + Model 代理调用（[relu_fn.py](examples/relu_fn.py)）
 
 完整的可运行示例（含真实的 6 组件代码）见 [relu_complete.py](examples/relu_complete.py)，以下为精简版：
 

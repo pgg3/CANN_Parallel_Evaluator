@@ -36,7 +36,7 @@ uv pip install -e .
 
 Two Python reference formats are supported (auto-detected):
 - **org format** — Model class + `get_inputs` / `get_init_inputs` ([relu_org.py](examples/relu_org.py))
-- **fn format** — `module_fn` + Model proxy call ([elu_fn.py](examples/elu_fn.py))
+- **fn format** — `module_fn` + Model proxy call ([relu_fn.py](examples/relu_fn.py))
 
 For a complete runnable example with all 6 real components, see [relu_complete.py](examples/relu_complete.py). Minimal version:
 
