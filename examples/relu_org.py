@@ -16,7 +16,7 @@ class Model(nn.Module):
 
 
 def get_inputs():
-    return [torch.randn(16, 16384)]
+    return [torch.randn(24, 1024)]
 
 
 def get_init_inputs():

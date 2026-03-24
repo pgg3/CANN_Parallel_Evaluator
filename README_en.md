@@ -11,7 +11,7 @@ Built on [evotoolkit](https://github.com/pgg3/evotoolkit), now published as a st
 - **Unified pipeline** — compile, correctness check, and performance measurement in one call
 - **Multi-device parallel** — device pool distributes evaluations across NPUs with exclusive access
 - **Sandbox isolation** — `multiprocessing.spawn` subprocesses prevent OOM / segfault propagation
-- **Template-driven** — LLM provides 6 logic components; templates handle all boilerplate
+- **Template-driven** — LLM provides 4 complete source files; templates auto-generate project.json and model.cpp
 
 ## Prerequisites
 
@@ -23,10 +23,12 @@ Built on [evotoolkit](https://github.com/pgg3/evotoolkit), now published as a st
 
 ```bash
 git clone https://github.com/pgg3/CANN_Parallel_Evaluator.git
-pip install -e ./CANN_Parallel_Evaluator
+cd CANN_Parallel_Evaluator
+uv venv --python /root/miniconda3/envs/pangu/bin/python --system-site-packages
+uv pip install -e .
 ```
 
-> The CANN task has no extra Python dependencies. CANN Toolkit and torch-npu must be installed at the system level.
+> torch and numpy are provided by the NPU runtime (torch-npu). Do **not** install them via pip to avoid version conflicts.
 
 ## Quick Start
 
@@ -47,12 +49,10 @@ task = CANNInitTask(data={
 })
 
 config = CANNSolutionConfig(
-    kernel_impl=KERNEL_IMPL,             # Ascend C Kernel class
-    kernel_entry_body=KERNEL_ENTRY_BODY, # Entry function body
-    tiling_fields=TILING_FIELDS,         # TilingData struct fields
-    tiling_func_body=TILING_FUNC_BODY,   # Host-side tiling logic
-    infer_shape_body=INFER_SHAPE_BODY,   # Output shape inference
-    output_alloc_code=OUTPUT_ALLOC_CODE, # Output tensor allocation
+    op_kernel=OP_KERNEL,             # op_kernel/*.cpp (Kernel class + entry function)
+    op_host_tiling=OP_HOST_TILING,   # op_host/*_tiling.h (TilingData struct)
+    op_host=OP_HOST,                 # op_host/*.cpp (TilingFunc / InferShape / OpDef)
+    pybinding=PYBINDING,             # CppExtension/csrc/op.cpp
 )
 
 result = task.evaluate_solution(Solution("", config.to_dict()))

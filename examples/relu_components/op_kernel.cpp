@@ -1,3 +1,5 @@
+#include "kernel_operator.h"
+
 using namespace AscendC;
 constexpr int32_t BUFFER_NUM = 2;
 
@@ -86,3 +88,10 @@ private:
     uint32_t blockLength, tileNum, tileLength, tailLength;
     bool hasTail;
 };
+
+extern "C" __global__ __aicore__ void relu_custom(GM_ADDR x, GM_ADDR output, GM_ADDR workspace, GM_ADDR tiling) {
+    GET_TILING_DATA(tilingData, tiling);
+KernelRelu op;
+op.Init(x, output, tilingData.totalLength, tilingData.tileNum, tilingData.tileLength);
+op.Process();
+}

@@ -11,7 +11,7 @@
 - **一体化流水线** — 编译、正确性校验、性能测量一次调用完成
 - **多设备并行** — 设备池机制将评估分发到多张 NPU，保证每卡独占访问
 - **沙箱隔离** — `multiprocessing.spawn` 子进程运行，OOM / segfault 不影响主进程
-- **模板驱动** — LLM 只需提供 6 个逻辑组件，模板自动处理所有样板代码
+- **模板驱动** — LLM 直接提供 4 个完整源文件，模板自动生成 project.json 和 model.cpp
 
 ## 环境要求
 
@@ -23,10 +23,12 @@
 
 ```bash
 git clone https://github.com/pgg3/CANN_Parallel_Evaluator.git
-pip install -e ./CANN_Parallel_Evaluator
+cd CANN_Parallel_Evaluator
+uv venv --python /root/miniconda3/envs/pangu/bin/python --system-site-packages
+uv pip install -e .
 ```
 
-> CANN 任务无额外 Python 依赖，CANN Toolkit 和 torch-npu 需在系统级安装。
+> torch 和 numpy 由 NPU 运行时环境（torch-npu）提供，**不要**通过 pip 单独安装以避免版本冲突。
 
 ## 快速开始
 
@@ -47,12 +49,10 @@ task = CANNInitTask(data={
 })
 
 config = CANNSolutionConfig(
-    kernel_impl=KERNEL_IMPL,             # Ascend C Kernel 类
-    kernel_entry_body=KERNEL_ENTRY_BODY, # 入口函数体
-    tiling_fields=TILING_FIELDS,         # TilingData 结构体字段
-    tiling_func_body=TILING_FUNC_BODY,   # Host 端分片计算逻辑
-    infer_shape_body=INFER_SHAPE_BODY,   # 输出 Shape 推断
-    output_alloc_code=OUTPUT_ALLOC_CODE, # 输出 tensor 分配
+    op_kernel=OP_KERNEL,             # op_kernel/*.cpp（Kernel 类 + 入口函数）
+    op_host_tiling=OP_HOST_TILING,   # op_host/*_tiling.h（TilingData 结构体）
+    op_host=OP_HOST,                 # op_host/*.cpp（TilingFunc / InferShape / OpDef）
+    pybinding=PYBINDING,             # CppExtension/csrc/op.cpp
 )
 
 result = task.evaluate_solution(Solution("", config.to_dict()))
